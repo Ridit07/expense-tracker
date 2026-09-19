@@ -1,0 +1,9 @@
+# Supabase project config. project_id is the project ref (public; it's in your
+# API URL: https://kfznuyrtsuflbtxqleet.supabase.co).
+project_id = "kfznuyrtsuflbtxqleet"
+
+[db]
+# Port for the local shadow DB used by `supabase db diff`. Not the remote port.
+port = 54322
+# Match your Supabase Postgres major version (15 or 17).
+major_version = 15
