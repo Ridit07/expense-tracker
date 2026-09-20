@@ -1,44 +1,29 @@
-// Package handler is the Vercel serverless entrypoint. Vercel builds files under
-// api/ into functions; vercel.json rewrites every path to /api/index so our
-// existing router handles all routes.
+// TEMPORARY diagnostic handler — dumps what Vercel passes the function so we can
+// fix path routing. Will be reverted to the real handler.
 package handler
 
 import (
+	"fmt"
 	"net/http"
-	"sync"
-
-	"expense-tracker/config"
-	"expense-tracker/db"
-	"expense-tracker/transport_http"
+	"sort"
 )
-
-var (
-	initOnce sync.Once
-	router   http.Handler
-	initErr  error
-)
-
-// setup runs once per warm instance: load config + open the DB pool. Schema is
-// NOT migrated here (no startup on serverless) — migrations are applied via
-// supabase/migrations.
-func setup() {
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		initErr = err
-		return
-	}
-	if err := db.InitDB(cfg.DBReadURL, cfg.DBWriteURL); err != nil {
-		initErr = err
-		return
-	}
-	router = transport_http.NewServer(cfg).Handler
-}
 
 func Handler(w http.ResponseWriter, r *http.Request) {
-	initOnce.Do(setup)
-	if initErr != nil {
-		http.Error(w, "init failed: "+initErr.Error(), http.StatusInternalServerError)
-		return
+	w.Header().Set("Content-Type", "text/plain")
+	fmt.Fprintf(w, "method=%s\n", r.Method)
+	fmt.Fprintf(w, "url.path=%q\n", r.URL.Path)
+	fmt.Fprintf(w, "url.rawpath=%q\n", r.URL.RawPath)
+	fmt.Fprintf(w, "url.rawquery=%q\n", r.URL.RawQuery)
+	fmt.Fprintf(w, "requesturi=%q\n", r.RequestURI)
+	fmt.Fprintf(w, "host=%q\n", r.Host)
+
+	keys := make([]string, 0, len(r.Header))
+	for k := range r.Header {
+		keys = append(keys, k)
 	}
-	router.ServeHTTP(w, r)
+	sort.Strings(keys)
+	fmt.Fprintln(w, "--- headers ---")
+	for _, k := range keys {
+		fmt.Fprintf(w, "%s: %s\n", k, r.Header.Get(k))
+	}
 }
