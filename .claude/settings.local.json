@@ -8,7 +8,8 @@
       "Bash(go build *)",
       "Bash(go vet *)",
       "Bash(docker version *)",
-      "Bash(docker info *)"
+      "Bash(docker info *)",
+      "Bash(go run *)"
     ]
   }
 }
