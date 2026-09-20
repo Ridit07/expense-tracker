@@ -26,10 +26,12 @@ func main() {
 		log.Fatalf("failed to init db: %v", err)
 	}
 
-	// Auto-migrate the ingestion schema. As new pipeline tables are added they
-	// get appended here.
-	if err := db.WriteConnection().AutoMigrate(&model.User{}, &model.RawMessage{}); err != nil {
-		log.Fatalf("failed to migrate db: %v", err)
+	// Migrate only outside production so startup is fast on the server host
+	// (production schema is managed via supabase/migrations; the tables exist).
+	if cfg.Env != "production" {
+		if err := db.WriteConnection().AutoMigrate(&model.User{}, &model.RawMessage{}); err != nil {
+			log.Fatalf("failed to migrate db: %v", err)
+		}
 	}
 
 	srv := transport_http.NewServer(cfg)
