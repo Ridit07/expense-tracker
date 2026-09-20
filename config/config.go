@@ -37,6 +37,12 @@ func LoadConfig() (*Config, error) {
 		LogLevel:   os.Getenv("LOG_LEVEL"),
 	}
 
+	// Many container hosts (Render, Cloud Run, Railway) inject the port to bind
+	// as PORT. Prefer it, then HTTP_PORT, then a local default.
+	if p := os.Getenv("PORT"); p != "" {
+		cfg.HTTPPort = p
+	}
+
 	// Validate required fields.
 	if cfg.DBReadURL == "" || cfg.DBWriteURL == "" {
 		log.Println("failed to load env: missing database URLs")

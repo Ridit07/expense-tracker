@@ -1,0 +1,145 @@
+{
+  "info": {
+    "name": "Expense Tracker API",
+    "description": "Local testing collection. Register or Login first to auto-populate {{token}}.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080" },
+    { "key": "token", "value": "" },
+    { "key": "messageId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] }
+      }
+    },
+    {
+      "name": "Auth - Register",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "var json = pm.response.json();",
+              "if (json && json.data && json.data.token) {",
+              "  pm.collectionVariables.set('token', json.data.token);",
+              "  console.log('token saved');",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"me@example.com\",\n  \"password\": \"supersecret\",\n  \"name\": \"Me\"\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/api/v1/auth/register", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "register"] }
+      }
+    },
+    {
+      "name": "Auth - Login",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "var json = pm.response.json();",
+              "if (json && json.data && json.data.token) {",
+              "  pm.collectionVariables.set('token', json.data.token);",
+              "  console.log('token saved');",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"me@example.com\",\n  \"password\": \"supersecret\"\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/api/v1/auth/login", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "login"] }
+      }
+    },
+    {
+      "name": "Messages - Ingest (single)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "var json = pm.response.json();",
+              "if (json && json.data && json.data.results && json.data.results.length) {",
+              "  pm.collectionVariables.set('messageId', json.data.results[0].id);",
+              "  console.log('messageId saved');",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{token}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"sender\": \"AD-HDFCBK\",\n  \"body\": \"HDFC Bank: Rs. 1,250.00 debited from A/c XX1234 towards ZOMATO on 19-09-26.\",\n  \"source\": \"ios_shortcut\",\n  \"received_at\": \"2026-09-19T10:30:00Z\"\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/api/v1/messages", "host": ["{{baseUrl}}"], "path": ["api", "v1", "messages"] }
+      }
+    },
+    {
+      "name": "Messages - Ingest (batch)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{token}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"messages\": [\n    { \"sender\": \"AD-HDFCBK\", \"body\": \"HDFC Bank: Rs. 100.00 debited from A/c XX1234 towards UBER.\" },\n    { \"body\": \"ICICI: Rs. 50 debited towards BLINKIT\" }\n  ]\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/api/v1/messages", "host": ["{{baseUrl}}"], "path": ["api", "v1", "messages"] }
+      }
+    },
+    {
+      "name": "Messages - List",
+      "request": {
+        "method": "GET",
+        "header": [ { "key": "Authorization", "value": "Bearer {{token}}" } ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/messages?status=RECEIVED&limit=50",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "messages"],
+          "query": [
+            { "key": "status", "value": "RECEIVED" },
+            { "key": "limit", "value": "50" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Messages - Get by ID",
+      "request": {
+        "method": "GET",
+        "header": [ { "key": "Authorization", "value": "Bearer {{token}}" } ],
+        "url": { "raw": "{{baseUrl}}/api/v1/messages/{{messageId}}", "host": ["{{baseUrl}}"], "path": ["api", "v1", "messages", "{{messageId}}"] }
+      }
+    }
+  ]
+}

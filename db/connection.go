@@ -1,6 +1,8 @@
 package db
 
 import (
+	"os"
+	"strconv"
 	"time"
 
 	"gorm.io/driver/postgres"
@@ -11,61 +13,54 @@ import (
 var readDB *gorm.DB
 var writeDB *gorm.DB
 
-// InitDB opens the read and write connection pools. A read/write split is used
-// so heavy analytics reads can later be pointed at a replica without touching
-// the write path.
-func InitDB(
-	readURL string,
-	writeURL string,
-) error {
-
+// InitDB opens the read and write connection pools. Pool sizes are tunable via
+// DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS (keep them tiny on serverless).
+func InitDB(readURL, writeURL string) error {
 	var err error
 
-	readDB, err = gorm.Open(
-		postgres.Open(readURL),
-		&gorm.Config{
-			Logger: logger.Default.LogMode(logger.Info),
-		},
+	if readDB, err = open(readURL); err != nil {
+		return err
+	}
+	if writeDB, err = open(writeURL); err != nil {
+		return err
+	}
+
+	maxOpen := envInt("DB_MAX_OPEN_CONNS", 50)
+	maxIdle := envInt("DB_MAX_IDLE_CONNS", 10)
+
+	if err := configurePool(readDB, maxOpen, maxIdle); err != nil {
+		return err
+	}
+	return configurePool(writeDB, maxOpen, maxIdle)
+}
+
+func open(dsn string) (*gorm.DB, error) {
+	return gorm.Open(
+		// PreferSimpleProtocol disables prepared-statement caching so the
+		// Supabase transaction pooler (pgbouncer) works under serverless.
+		postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true}),
+		&gorm.Config{Logger: logger.Default.LogMode(logger.Warn)},
 	)
+}
 
+func configurePool(gdb *gorm.DB, maxOpen, maxIdle int) error {
+	sqlDB, err := gdb.DB()
 	if err != nil {
 		return err
 	}
-
-	writeDB, err = gorm.Open(
-		postgres.Open(writeURL),
-		&gorm.Config{
-			Logger: logger.Default.LogMode(logger.Info),
-		},
-	)
-
-	if err != nil {
-		return err
-	}
-
-	// Configure read pool.
-	readSQLDB, err := readDB.DB()
-
-	if err != nil {
-		return err
-	}
-
-	readSQLDB.SetMaxOpenConns(50)
-	readSQLDB.SetMaxIdleConns(10)
-	readSQLDB.SetConnMaxLifetime(time.Hour)
-
-	// Configure write pool.
-	writeSQLDB, err := writeDB.DB()
-
-	if err != nil {
-		return err
-	}
-
-	writeSQLDB.SetMaxOpenConns(50)
-	writeSQLDB.SetMaxIdleConns(10)
-	writeSQLDB.SetConnMaxLifetime(time.Hour)
-
+	sqlDB.SetMaxOpenConns(maxOpen)
+	sqlDB.SetMaxIdleConns(maxIdle)
+	sqlDB.SetConnMaxLifetime(time.Hour)
 	return nil
+}
+
+func envInt(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
 }
 
 func ReadConnection() *gorm.DB {
