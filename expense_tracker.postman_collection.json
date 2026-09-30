@@ -106,6 +106,7 @@
       "name": "Messages - Ingest (batch)",
       "request": {
         "method": "POST",
+        "description": "Max 500 messages and 5MB per request; over either is 400 batch_too_large or 413 payload_too_large.",
         "header": [
           { "key": "Content-Type", "value": "application/json" },
           { "key": "Authorization", "value": "Bearer {{token}}" }
@@ -115,6 +116,38 @@
           "raw": "{\n  \"messages\": [\n    { \"sender\": \"AD-HDFCBK\", \"body\": \"HDFC Bank: Rs. 100.00 debited from A/c XX1234 towards UBER.\" },\n    { \"body\": \"ICICI: Rs. 50 debited towards BLINKIT\" }\n  ]\n}"
         },
         "url": { "raw": "{{baseUrl}}/api/v1/messages", "host": ["{{baseUrl}}"], "path": ["api", "v1", "messages"] }
+      }
+    },
+    {
+      "name": "Messages - Ingest (macOS chat.db batch)",
+      "request": {
+        "method": "POST",
+        "description": "What the macOS sync tool posts: source=macos_chatdb with external_id set to chat.db message.guid, which becomes the dedup key. Re-sending the same guids is a no-op (duplicate=true), so a backfill is safe to repeat. The second message here is an OTP and comes back REJECTED.",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{token}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"messages\": [\n    {\n      \"sender\": \"AD-HDFCBK\",\n      \"body\": \"HDFC Bank: Rs. 1,250.00 debited from A/c XX1234 towards ZOMATO on 19-09-26.\",\n      \"source\": \"macos_chatdb\",\n      \"external_id\": \"p:0/1A2B3C4D-0001-4E5F-8A9B-000000000001\",\n      \"received_at\": \"2026-09-19T10:30:00Z\"\n    },\n    {\n      \"sender\": \"VM-HDFCBK\",\n      \"body\": \"123456 is your OTP for login. Do not share it with anyone.\",\n      \"source\": \"macos_chatdb\",\n      \"external_id\": \"p:0/1A2B3C4D-0002-4E5F-8A9B-000000000002\",\n      \"received_at\": \"2026-09-19T10:31:00Z\"\n    }\n  ]\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/api/v1/messages", "host": ["{{baseUrl}}"], "path": ["api", "v1", "messages"] }
+      }
+    },
+    {
+      "name": "Messages - Sync State",
+      "request": {
+        "method": "GET",
+        "description": "Watermark for a pull-based sync tool: {last_received_at, last_external_id, count} for this user and source. Drop the source param for totals across every source. Never 404s - an empty state means we hold nothing yet.",
+        "header": [ { "key": "Authorization", "value": "Bearer {{token}}" } ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/messages/sync-state?source=macos_chatdb",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "messages", "sync-state"],
+          "query": [
+            { "key": "source", "value": "macos_chatdb" }
+          ]
+        }
       }
     },
     {

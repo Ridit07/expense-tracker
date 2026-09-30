@@ -9,7 +9,19 @@
       "Bash(go vet *)",
       "Bash(docker version *)",
       "Bash(docker info *)",
-      "Bash(go run *)"
+      "Bash(go run *)",
+      "Bash(curl -s -D - https://expense-tracker-three-phi-23.vercel.app/health)",
+      "Bash(curl -s -D - https://expense-tracker-three-phi-23.vercel.app/api/index)",
+      "Bash(curl -s https://expense-tracker-three-phi-23.vercel.app/api/v1/foo?x=1)",
+      "Bash(curl -s -D - \"https://expense-tracker-dcqbqq5mn-ridit07s-projects.vercel.app/health\")",
+      "Bash(curl -s -o /dev/null -w \"status=%{http_code}\\\\n\" \"https://expense-tracker-dcqbqq5mn-ridit07s-projects.vercel.app/api/index\")",
+      "Bash(curl -s https://expense-tracker-three-phi-23.vercel.app/health)",
+      "Bash(curl -s https://expense-tracker-three-phi-23.vercel.app/api/v1/auth/login?debug=1)",
+      "Bash(git add *)",
+      "Bash(git commit -m 'Run as server \\(Vercel Go app mode\\); drop api function + rewrite; skip migrate in prod *)",
+      "Bash(git push *)",
+      "Bash(curl -s -X POST https://expense-tracker-three-phi-23.vercel.app/api/v1/auth/register -H 'Content-Type: application/json' -d '{\"email\":\"vercel@example.com\",\"password\":\"supersecret\",\"name\":\"Vercel Test\"}' -w '\\\\n\\(status %{http_code}\\)\\\\n')",
+      "Bash(curl -s -X POST https://expense-tracker-three-phi-23.vercel.app/api/v1/auth/login -H 'Content-Type: application/json' -d '{\"email\":\"vercel@example.com\",\"password\":\"supersecret\"}' -w '\\\\n\\(status %{http_code}\\)\\\\n')"
     ]
   }
 }

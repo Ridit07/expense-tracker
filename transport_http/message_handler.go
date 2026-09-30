@@ -2,9 +2,12 @@ package transport_http
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"expense-tracker/common"
@@ -27,8 +30,15 @@ func NewMessageHandler(svc *services.MessageService) *MessageHandler {
 func (h *MessageHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/messages", h.ingest)
 	mux.HandleFunc("GET /api/v1/messages", h.list)
+	// Registered alongside /{id}: a literal segment outranks a wildcard in
+	// Go's pattern matcher, so "sync-state" is never read as an id.
+	mux.HandleFunc("GET /api/v1/messages/sync-state", h.syncState)
 	mux.HandleFunc("GET /api/v1/messages/{id}", h.get)
 }
+
+// maxIngestBytes bounds the request body. The macOS backfill posts hundreds of
+// messages per call, which 1MB no longer covers.
+const maxIngestBytes = 5 << 20
 
 // ---- request/response DTOs ----
 
@@ -37,6 +47,7 @@ type ingestMessageDTO struct {
 	Body       string `json:"body"`
 	Source     string `json:"source"`
 	ReceivedAt string `json:"received_at"` // RFC3339; optional
+	ExternalID string `json:"external_id"` // source's own id, e.g. chat.db guid; optional
 }
 
 // ingestRequest accepts either a single message or a batch. If Messages is set
@@ -47,14 +58,16 @@ type ingestRequest struct {
 }
 
 type ingestResultDTO struct {
-	ID        string `json:"id"`
-	Status    string `json:"status"`
-	Duplicate bool   `json:"duplicate"`
+	ID         string `json:"id"`
+	Status     string `json:"status"`
+	Duplicate  bool   `json:"duplicate"`
+	ExternalID string `json:"external_id,omitempty"`
 }
 
 type ingestResponseDTO struct {
 	Ingested  int               `json:"ingested"`
 	Duplicate int               `json:"duplicate"`
+	Rejected  int               `json:"rejected"` // stored, but classified as a non-transaction
 	Results   []ingestResultDTO `json:"results"`
 }
 
@@ -63,8 +76,18 @@ type ingestResponseDTO struct {
 func (h *MessageHandler) ingest(w http.ResponseWriter, r *http.Request) {
 	userID := userIDFromContext(r.Context())
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20)) // 1MB cap
+	// MaxBytesReader rather than LimitReader: a limit reader truncates
+	// silently, and the client then gets "not valid JSON" for what is really an
+	// oversized batch — an error that sends them debugging the wrong thing.
+	r.Body = http.MaxBytesReader(w, r.Body, maxIngestBytes)
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			common.WriteError(w, http.StatusRequestEntityTooLarge, "payload_too_large",
+				fmt.Sprintf("request body exceeds the %d MB limit; send fewer messages per batch", maxIngestBytes>>20))
+			return
+		}
 		common.WriteError(w, http.StatusBadRequest, "invalid_body", "could not read request body")
 		return
 	}
@@ -81,6 +104,13 @@ func (h *MessageHandler) ingest(w http.ResponseWriter, r *http.Request) {
 		dtos = []ingestMessageDTO{req.ingestMessageDTO}
 	}
 
+	if len(dtos) > services.MaxBatchSize {
+		common.WriteError(w, http.StatusBadRequest, "batch_too_large",
+			fmt.Sprintf("batch contains %d messages; the maximum is %d per request",
+				len(dtos), services.MaxBatchSize))
+		return
+	}
+
 	inputs := make([]services.IngestInput, 0, len(dtos))
 	for _, d := range dtos {
 		receivedAt, perr := parseReceivedAt(d.ReceivedAt)
@@ -88,11 +118,17 @@ func (h *MessageHandler) ingest(w http.ResponseWriter, r *http.Request) {
 			common.WriteError(w, http.StatusBadRequest, "invalid_received_at", "received_at must be RFC3339")
 			return
 		}
+		source, serr := parseSource(d.Source)
+		if serr != nil {
+			common.WriteError(w, http.StatusBadRequest, "invalid_input", serr.Error())
+			return
+		}
 		inputs = append(inputs, services.IngestInput{
 			Sender:     d.Sender,
 			Body:       d.Body,
-			Source:     model.MessageSource(d.Source),
+			Source:     source,
 			ReceivedAt: receivedAt,
+			ExternalID: d.ExternalID,
 		})
 	}
 
@@ -109,14 +145,38 @@ func (h *MessageHandler) ingest(w http.ResponseWriter, r *http.Request) {
 		} else {
 			resp.Ingested++
 		}
+		if res.Message.Status == model.StatusRejected {
+			resp.Rejected++
+		}
 		resp.Results = append(resp.Results, ingestResultDTO{
-			ID:        res.Message.ID.String(),
-			Status:    string(res.Message.Status),
-			Duplicate: res.Duplicate,
+			ID:         res.Message.ID.String(),
+			Status:     string(res.Message.Status),
+			Duplicate:  res.Duplicate,
+			ExternalID: res.Message.ExternalID,
 		})
 	}
 
 	common.WriteSuccess(w, http.StatusCreated, resp)
+}
+
+// syncState answers "what did you last receive from me on this source?" so a
+// pull-based sync tool can resume from a watermark instead of replaying its
+// whole history after a reinstall.
+func (h *MessageHandler) syncState(w http.ResponseWriter, r *http.Request) {
+	userID := userIDFromContext(r.Context())
+
+	source, err := parseSource(r.URL.Query().Get("source"))
+	if err != nil {
+		common.WriteError(w, http.StatusBadRequest, "invalid_input", err.Error())
+		return
+	}
+
+	state, err := h.svc.SyncState(userID, source)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	common.WriteSuccess(w, http.StatusOK, state)
 }
 
 func (h *MessageHandler) list(w http.ResponseWriter, r *http.Request) {
@@ -152,6 +212,27 @@ func parseReceivedAt(s string) (time.Time, error) {
 		return time.Time{}, nil
 	}
 	return time.Parse(time.RFC3339, s)
+}
+
+// parseSource validates against the known source set. An empty value is left
+// empty for the caller to interpret (ingest defaults it, sync-state reads it as
+// "all sources"); anything unrecognised is rejected rather than stored, since a
+// typo'd source silently becomes a value no later stage can act on.
+func parseSource(s string) (model.MessageSource, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", nil
+	}
+	src := model.MessageSource(s)
+	if !src.Valid() {
+		sources := model.MessageSources()
+		known := make([]string, 0, len(sources))
+		for _, v := range sources {
+			known = append(known, string(v))
+		}
+		return "", fmt.Errorf("unknown source %q; expected one of: %s", s, strings.Join(known, ", "))
+	}
+	return src, nil
 }
 
 func parseIntDefault(s string, def int) int {
