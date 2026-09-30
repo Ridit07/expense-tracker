@@ -1,0 +1,68 @@
+name: Deploy
+
+# Migrations and the code that depends on them ship as one ordered unit.
+#
+# Vercel's own Git integration is switched off for main (see vercel.json), so
+# this workflow is the only thing that promotes to production. `supabase db push`
+# runs first and the deploy step is skipped if it fails, which means the binary
+# can never go live against a schema it expects columns from. The previous
+# arrangement ran both off the same push and let them race; that is how a model
+# referencing raw_messages.external_id reached production before the column did.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Two pushes in quick succession must not interleave a migration with the other
+# one's deploy. Queue instead of cancelling: a half-finished db push that gets
+# cancelled is worse than waiting.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      SUPABASE_PROJECT_ID: kfznuyrtsuflbtxqleet
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Fail here rather than after the schema has already moved.
+      - name: Check required secrets
+        run: |
+          missing=
+          for v in SUPABASE_ACCESS_TOKEN SUPABASE_DB_PASSWORD VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID; do
+            [ -n "${!v}" ] || missing="$missing $v"
+          done
+          if [ -n "$missing" ]; then
+            echo "Missing repository secrets:$missing" >&2
+            echo "Set them at Settings > Secrets and variables > Actions." >&2
+            exit 1
+          fi
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Link project
+        run: supabase link --project-ref "$SUPABASE_PROJECT_ID"
+
+      # Print what is about to change before changing it, so the run log is a
+      # record of every schema change production has ever taken.
+      - name: Show pending migrations
+        run: supabase db push --dry-run
+
+      - name: Push migrations
+        run: supabase db push
+
+      # Only reached if every step above succeeded.
+      - name: Deploy to Vercel
+        run: |
+          npm install -g vercel@latest
+          vercel deploy --prod --yes --token="$VERCEL_TOKEN"
