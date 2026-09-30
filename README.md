@@ -46,6 +46,45 @@ make run                      # or: go run .
 Without Docker, point `DB_READ_URL` / `DB_WRITE_URL` at any Postgres instance.
 The schema is auto-migrated on startup.
 
+## Deploying
+
+Production does **not** auto-migrate: `main.go` skips `AutoMigrate` when
+`ENV=production`, so the deployed schema comes only from `supabase/migrations/`.
+That split is deliberate, and it means a model change and its migration have to
+reach production in the right order.
+
+`.github/workflows/deploy.yml` enforces the order. Vercel's own Git integration
+is disabled for `main` in `vercel.json`, so a push to `main` does not deploy by
+itself. The workflow links Supabase, runs `supabase db push`, and only then runs
+`vercel deploy --prod`. A failed migration therefore leaves the old code serving
+the old schema, rather than putting new code in front of a database that has not
+caught up.
+
+Required repository secrets (Settings > Secrets and variables > Actions):
+
+| secret | where it comes from |
+| --- | --- |
+| `SUPABASE_ACCESS_TOKEN` | Supabase Dashboard > Account > Access Tokens |
+| `SUPABASE_DB_PASSWORD` | the project's database password |
+| `VERCEL_TOKEN` | Vercel > Settings > Tokens |
+| `VERCEL_ORG_ID` | `.vercel/project.json` after `vercel link`, or Vercel team settings |
+| `VERCEL_PROJECT_ID` | same |
+
+The workflow checks all five before touching the database, so a missing secret
+fails on the first step instead of halfway through a schema change.
+
+### Adding a migration
+
+Write the SQL into `supabase/migrations/<timestamp>_<name>.sql`, keep it
+idempotent (`if not exists`, `drop ... if exists`) so re-running is free, and
+commit it in the *same* commit as the model change that needs it. Push to
+`main`; the workflow does the rest.
+
+If `supabase db push` reports a history mismatch — which happens when tables
+were originally created by `AutoMigrate` rather than by a migration — reconcile
+it once with `supabase migration repair --status applied <version>`, then push
+again.
+
 ## Auth
 
 JWT-based. Register or log in to get a token, then send it as
